@@ -49,14 +49,23 @@ TP_DEN = 1000
 # Stop loss at -2% of the position's cost: value * 100 <= cost * 98.
 SL_NUM = 98
 SL_DEN = 100
+# After a stop-loss exit, wait this many bars before trusting the washout
+# setup again: a stop means the downtrend is stronger than the setup assumed,
+# and re-buying into the same falling tape one bar later just repeats the
+# loss. A take-profit exit has no cooldown -- a fresh washout setup after a
+# win is a new trade, not a repeat of a failed one.
+SL_COOLDOWN_BARS = 30
 # Slippage cap, in bps past the latest close the bot was sent.
 MAX_SLIPPAGE_BPS = 100
 
 # Closes of the bars before the current batch, oldest first.
 closes = []
+# Bar index of the last stop-loss exit, or None.
+last_sl_bar = None
 
 
 def on_batch(state, batch):
+    global last_sl_bar
     if state.warming_up:
         return []
     bar = None
@@ -77,12 +86,16 @@ def on_batch(state, batch):
                            "qty": held.qty,
                            "max_slippage_bps": MAX_SLIPPAGE_BPS})
         elif value * SL_DEN <= held.cost * SL_NUM:
+            last_sl_bar = len(closes)
             orders.append({"side": "sell", "symbol": SYMBOL,
                            "qty": held.qty,
                            "max_slippage_bps": MAX_SLIPPAGE_BPS})
     elif len(closes) >= HIGH_BARS:
+        cooled_down = (last_sl_bar is None
+                       or len(closes) - last_sl_bar >= SL_COOLDOWN_BARS)
         high = max(closes[-HIGH_BARS:])
-        if close * DIP_DEN <= high * DIP_NUM and state.cash >= 1_000_000:
+        if (cooled_down and close * DIP_DEN <= high * DIP_NUM
+                and state.cash >= 1_000_000):
             orders.append({"side": "buy", "symbol": SYMBOL,
                            "notional_quote_units": state.cash,
                            "max_slippage_bps": MAX_SLIPPAGE_BPS})
